@@ -1,9 +1,11 @@
 import tensorflow as tf
-
+import dataloader
 
 def get_dataset(sequence_length=128, batch_size=32, vocab_size=512):
     if False:
-        dataset = None
+        # dataset = tfds.load('c4', split='train', shuffle_files=True)
+        path_to_json = "/workspace/tensorflow_tensorrt/tftrt/benchmarking-python/huggingface/t5/c4-validation.00000-of-00001.json"
+        dataset = dataloader.get_dataset_c4(path_to_json, sequence_length, vocab_size)
     else:
         tf.random.set_seed(12345)
         attention_mask = tf.random.uniform(
