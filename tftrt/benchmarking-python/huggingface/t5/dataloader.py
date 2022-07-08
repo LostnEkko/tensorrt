@@ -4,36 +4,85 @@
 # import t5.data
 # from t5.models import utils as model_utils
 # import tensorflow.compat.v1 as tf
-# import tensorflow_datasets as tfds
+
+############## Require T5 version 0.4.0 #############
 
 import json
 import csv
 from os.path import exists
-# from t5.models import mesh_transformer
+
+from t5.models import mesh_transformer
+import t5.data.preprocessors as prep
+from t5.data.sentencepiece_vocabulary import SentencePieceVocabulary
 import tensorflow as tf
+import tensorflow_datasets as tfds
+from transformers import T5Tokenizer
 
-def json2tsv(path_to_json, output_tsv_path):
-    '''
-    convert json file to tsv file in format <input>/t<output>
-
-    '''
-
-    sfd = open(path_to_json, "r")
-    ofd = open(output_tsv_path, "w+")
-    tsv_writer = csv.writer(ofd, delimiter='\t')
-    line = sfd.readline()
-    while line:
+def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512):
+    tokenizer = T5Tokenizer.from_pretrained("t5-small")
+    def preprocess_inputs_fn(line):
         data = json.loads(line)
-        tsv_writer.writerow(["url", "text"])
-        tsv_writer.writerow([data["url"], data["text"]])
-        line = sfd.readline()
-    sfd.close()
-    ofd.close()
+        input_ids = tokenizer(
+            data["text"], 
+            return_tensors="tf", 
+            max_length=sequence_length, 
+            truncation=True, 
+            # padding=True
+        )   # .input_ids
+        import pprint
+        pprint.pprint(input_ids)
+        return {"targets": input_ids}
+    
+    def transform_fn():
+        # attention_mask, 
+        # decoder_attention_mask, 
+        # decoder_input_ids
+        return
 
+    # fd = open(path_to_json, "r")
+    # line = fd.readline()
+    # while line:
+    #     data = json.loads(line)
+    #     input_ids = tokenizer(
+    #         data["text"], 
+    #         return_tensors="tf", 
+    #         max_length=128, 
+    #         truncation=True, 
+    #         # padding=True
+    #     ).input_ids
+    #     print(input_ids)
+    #     ds_input_ids = tf.data.Dataset.from_tensor_slices({"targets": input_ids})
+    #     break
+    #     line = fd.readline()
+    # fd.close()
+    # ####Construct tfdsd dataset and vocabulary above.
 
+    vocabulary = SentencePieceVocabulary(
+        sentencepiece_model_file="spiece.model",
+        extra_ids=0
+    )
 
+    if len(filenames) == 1:
+        dataset = tf.data.TextLineDataset(filenames[0])
+    else:
+        raise RuntimeError()
+    dataset = dataset.map(preprocess_inputs_fn)
+    dataset = prep.denoise(
+            dataset,
+            vocabulary,
+            noise_density=0.15,
+            noise_mask_fn=prep.random_spans_noise_mask,
+            inputs_fn=prep.noise_token_to_sentinel,
+            targets_fn=None
+        )  # dataset.map(...) 
+    dataset = dataset.map(transform_fn)
+    dataset = dataset.batch(batch_size)
+    dataset = dataset.prefetch()
+    return dataset
 
+'''    
 def get_dataset_c4(path_to_json, sequence_length, vocabulary):
+    filename = '.'.join(path_to_json.split('.')[:-1]) + '.tsv'
     overwrite_tsv_flag = True
     # Have tsv file created under the same dir and name as json file
     filename = '.'.join(path_to_json.split('.')[:-1]) + '.tsv'
@@ -56,7 +105,7 @@ def get_dataset_c4(path_to_json, sequence_length, vocabulary):
         shuffle=False,
         column_names= ["url", "text"]
     )
-
+'''
 
 '''
 def packed_parallel_tsv_dataset(dataset=gin.REQUIRED,
