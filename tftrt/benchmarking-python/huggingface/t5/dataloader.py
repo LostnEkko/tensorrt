@@ -17,11 +17,13 @@ from t5.data.sentencepiece_vocabulary import SentencePieceVocabulary
 import tensorflow as tf
 import tensorflow_datasets as tfds
 from transformers import T5Tokenizer
+import pprint
+
 
 def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512):
     tokenizer = T5Tokenizer.from_pretrained("t5-small")
     def preprocess_inputs_fn(line):
-        data = json.loads(line)
+        data = json.loads(tf.strings.join(line).numpy())
         input_ids = tokenizer(
             data["text"], 
             return_tensors="tf", 
@@ -29,32 +31,43 @@ def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512
             truncation=True, 
             # padding=True
         )   # .input_ids
-        import pprint
         pprint.pprint(input_ids)
         return {"targets": input_ids}
-    
-    def transform_fn():
-        # attention_mask, 
-        # decoder_attention_mask, 
-        # decoder_input_ids
-        return
+        return line
+    def transform_fn(line):
+        # decoder_attention_mask, # Can be no masks at all, exclusive for flax
 
-    # fd = open(path_to_json, "r")
-    # line = fd.readline()
-    # while line:
-    #     data = json.loads(line)
-    #     input_ids = tokenizer(
-    #         data["text"], 
-    #         return_tensors="tf", 
-    #         max_length=128, 
-    #         truncation=True, 
-    #         # padding=True
-    #     ).input_ids
-    #     print(input_ids)
-    #     ds_input_ids = tf.data.Dataset.from_tensor_slices({"targets": input_ids})
-    #     break
-    #     line = fd.readline()
-    # fd.close()
+        # decoder_input_ids
+        # replace padding token id's of the labels by -100 so it's ignored by the loss
+        # labels are targets
+        # labels = torch.tensor(labels)
+        # labels[labels == tokenizer.pad_token_id] = -100
+        # And shift labels later
+        # Look Here: https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_t5.py#L1624
+        # https://github.com/huggingface/transformers/blob/d0acc9537829e7d067edbb791473bbceb2ecf056/src/transformers/models/t5/modeling_t5.py#L805-L830
+        return line
+
+
+    fd = open(filenames[0], "r")
+    line = fd.readline()
+    while line:
+        data = json.loads(line)
+        encoding = tokenizer(
+            data["text"], 
+            return_tensors="tf", 
+            max_length=sequence_length, 
+            truncation=True, 
+            # padding=True
+        )# TODO: Why .input_ids is needed
+        dataset = tf.data.Dataset.from_tensor_slices({"targets": encoding.input_ids})
+        ds_attention_mask = tf.data.Dataset.from_tensor_slices({
+            "decoder_attention_mask": encoding.attention_mask, # or attention mask anyway? If no padding, should be ok
+            # "decoder_input_ids": encoding.decoder_input_ids,
+            # "decoder_attention_mask": encoding.decoder_attention_mask
+        })
+        break
+        line = fd.readline()
+    fd.close()
     # ####Construct tfdsd dataset and vocabulary above.
 
     vocabulary = SentencePieceVocabulary(
@@ -63,10 +76,11 @@ def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512
     )
 
     if len(filenames) == 1:
-        dataset = tf.data.TextLineDataset(filenames[0])
+        # dataset = tf.data.TextLineDataset(filenames[0])
+        pass
     else:
         raise RuntimeError()
-    dataset = dataset.map(preprocess_inputs_fn)
+    # dataset = dataset.map(preprocess_inputs_fn) #TODO: make it work
     dataset = prep.denoise(
             dataset,
             vocabulary,
@@ -76,8 +90,15 @@ def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512
             targets_fn=None
         )  # dataset.map(...) 
     dataset = dataset.map(transform_fn)
+
+    dataset = tf.data.Dataset.zip((
+            ds_attention_mask, 
+            # ds_decoder_attention_mask, 
+            # ds_decoder_input_ids, 
+            dataset
+    ))
     dataset = dataset.batch(batch_size)
-    dataset = dataset.prefetch()
+    dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
     return dataset
 
 '''    
