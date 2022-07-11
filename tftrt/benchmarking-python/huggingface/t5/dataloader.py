@@ -18,35 +18,58 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 from transformers import T5Tokenizer
 import pprint
-
+import tensorflow_io as tfio
 
 def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512):
     tokenizer = T5Tokenizer.from_pretrained("t5-small")
     def preprocess_inputs_fn(line):
-        data = json.loads(tf.strings.join(line).numpy())
-        input_ids = tokenizer(
-            data["text"], 
+        data = tfio.experimental.serialization.decode_json(
+            line, 
+            tf.TensorSpec(shape=[3, ], dtype=tf.string)
+        )
+        encoding = tokenizer(
+            data[0], 
             return_tensors="tf", 
             max_length=sequence_length, 
             truncation=True, 
             # padding=True
-        )   # .input_ids
-        pprint.pprint(input_ids)
-        return {"targets": input_ids}
-        return line
-    def transform_fn(line):
+        )
+        pprint.pprint(encoding.input_ids)
+        return {"targets": encoding.input_ids}
+
+    def transform_fn(features):
+        pad_token_id = tokenizer.pad_token_id
+        decoder_start_token_id = pad_token_id # by default those two the same. Can be read from json config provided
+
         # decoder_attention_mask, # Can be no masks at all, exclusive for flax
 
+        # Attention mask 1 like for c4 if no padding
+        # https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_flax_t5.py#L1075
         # decoder_input_ids
-        # replace padding token id's of the labels by -100 so it's ignored by the loss
+        # replace padding token id's of the labels by -100 so it's ignored by the loss, if padding applied
         # labels are targets
         # labels = torch.tensor(labels)
         # labels[labels == tokenizer.pad_token_id] = -100
         # And shift labels later
         # Look Here: https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_t5.py#L1624
         # https://github.com/huggingface/transformers/blob/d0acc9537829e7d067edbb791473bbceb2ecf056/src/transformers/models/t5/modeling_t5.py#L805-L830
-        return line
-
+        decoder_input_ids = tf.concat(
+            [[decoder_start_token_id], 
+            features["targets"][:-1]], 
+            axis = 0
+        )
+        decoder_input_ids = tf.where(
+            tf.equal(decoder_input_ids, -100), 
+            tf.fill(decoder_input_ids.shape.as_list(), pad_token_id), 
+            decoder_input_ids
+        )
+        return {
+                "attention_mask": tf.ones_like(features["inputs"]), 
+                "decoder_attention_mask": tf.ones_like(decoder_input_ids), 
+                "decoder_input_ids": decoder_input_ids, 
+                "input_ids": features["inputs"],
+                "targets": features["targets"]
+            }
 
     fd = open(filenames[0], "r")
     line = fd.readline()
@@ -58,13 +81,13 @@ def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512
             max_length=sequence_length, 
             truncation=True, 
             # padding=True
-        )# TODO: Why .input_ids is needed
+        )
         dataset = tf.data.Dataset.from_tensor_slices({"targets": encoding.input_ids})
-        ds_attention_mask = tf.data.Dataset.from_tensor_slices({
-            "decoder_attention_mask": encoding.attention_mask, # or attention mask anyway? If no padding, should be ok
-            # "decoder_input_ids": encoding.decoder_input_ids,
-            # "decoder_attention_mask": encoding.decoder_attention_mask
-        })
+        # ds_attention_mask = tf.data.Dataset.from_tensor_slices({
+        #     # "decoder_attention_mask": encoding.attention_mask, # or attention mask anyway? If no padding, should be ok
+        #     # "decoder_input_ids": encoding.decoder_input_ids,
+        #     # "decoder_attention_mask": encoding.decoder_attention_mask
+        # })
         break
         line = fd.readline()
     fd.close()
@@ -80,7 +103,8 @@ def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512
         pass
     else:
         raise RuntimeError()
-    # dataset = dataset.map(preprocess_inputs_fn) #TODO: make it work
+
+    # dataset = dataset.map(preprocess_inputs_fn)
     dataset = prep.denoise(
             dataset,
             vocabulary,
@@ -92,7 +116,7 @@ def get_dataset_c4(filenames, sequence_length=128, batch_size=32, vocab_size=512
     dataset = dataset.map(transform_fn)
 
     dataset = tf.data.Dataset.zip((
-            ds_attention_mask, 
+            # ds_attention_mask, 
             # ds_decoder_attention_mask, 
             # ds_decoder_input_ids, 
             dataset
