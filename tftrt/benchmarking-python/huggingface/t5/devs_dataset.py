@@ -54,6 +54,4 @@ dataset = get_dataset()
 ds_iter = iter(dataset)
 import pprint
 for batch in ds_iter:
-    print('start')
     pprint.pprint(batch)
-    print('finish')
