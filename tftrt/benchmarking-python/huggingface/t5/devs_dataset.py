@@ -23,6 +23,7 @@ def get_dataset(data_dir, sequence_length=128, batch_size=32, vocab_size=512, us
     if not use_random_data:
         dataset = dataloader.get_dataset_c4(
             data_dir,
+            "",
             None,
             sequence_length,
             batch_size,
@@ -78,3 +79,6 @@ dataset = get_dataset(data_dir="/data/c4/realnewslike/")
 
 for idx, batch in enumerate(iter(dataset)):
     print(f"Step: {idx + 1}")
+    if idx == 0:
+        import pprint
+        pprint.pprint(batch)

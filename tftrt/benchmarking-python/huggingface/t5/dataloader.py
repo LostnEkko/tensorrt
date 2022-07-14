@@ -29,6 +29,7 @@ from transformers import T5Tokenizer
 
 def get_dataset_c4(
     data_dir,
+    vocab_dir,
     tokenizer_dir=None,
     sequence_length=128,
     batch_size=32,
@@ -130,7 +131,7 @@ def get_dataset_c4(
 
     dataset = dataset.map(lambda line: {"targets":line[0]})
     vocabulary = SentencePieceVocabulary(
-        sentencepiece_model_file="spiece.model",
+        sentencepiece_model_file=os.path.join(vocab_dir, "spiece.model"),
         extra_ids=0
     )
     dataset = prep.denoise(

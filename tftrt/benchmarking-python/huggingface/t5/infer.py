@@ -51,6 +51,13 @@ class CommandLineAPI(BaseCommandLineAPI):
         )
 
         self._parser.add_argument(
+            "--vocab_dir",
+            type=str,
+            help="Directory containing the sentence piece model used by tokenizer. "
+            "Default to tokenizer_model_dir."
+        )
+
+        self._parser.add_argument(
             "--sequence_length",
             type=int,
             default=128,
@@ -97,10 +104,13 @@ class BenchmarkRunner(BaseBenchmarkRunner):
 
         Note: script arguments can be accessed using `self._args.attr`
         """
+        if self._args.vocab_dir is None:
+            self._args.vocab_dir =  self._args.tokenizer_model_dir
 
         if not self._args.use_random_data:
             dataset = dataloader.get_dataset_c4(
                 data_dir=self._args.data_dir,
+                vocab_dir=self._args.vocab_dir,
                 tokenizer_dir=self._args.tokenizer_model_dir,
                 sequence_length=self._args.sequence_length,
                 batch_size=self._args.batch_size,
@@ -166,13 +176,20 @@ class BenchmarkRunner(BaseBenchmarkRunner):
 
         Note: script arguments can be accessed using `self._args.attr`
         """
-
-        x = {
-           "attention_mask": data_batch[0],
-           "decoder_attention_mask": data_batch[1],
-           "decoder_input_ids": data_batch[2],
-           "input_ids": data_batch[3],
-        }
+        if not self._args.use_random_data:
+            x = {
+                "attention_mask": data_batch["attention_mask"],
+                "decoder_attention_mask": data_batch["decoder_attention_mask"],
+                "decoder_input_ids": data_batch["decoder_input_ids"],
+                "input_ids": data_batch["input_ids"],
+            }
+        else:
+            x = {
+                "attention_mask": data_batch[0],
+                "decoder_attention_mask": data_batch[1],
+                "decoder_input_ids": data_batch[2],
+                "input_ids": data_batch[3],
+            }
         return x, None
 
     def postprocess_model_outputs(self, predictions, expected):
