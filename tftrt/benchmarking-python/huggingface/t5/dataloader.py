@@ -23,7 +23,7 @@ import tensorflow as tf
 
 # from t5.models import mesh_transformer
 import t5.data.preprocessors as prep
-# from t5.data.sentencepiece_vocabulary import SentencePieceVocabulary
+from t5.data.sentencepiece_vocabulary import SentencePieceVocabulary
 from transformers import T5Tokenizer
 
 
@@ -36,45 +36,6 @@ def get_dataset_c4(
     noise_density=0.15
 ):
 
-    # vocabulary = SentencePieceVocabulary(
-    #     sentencepiece_model_file="spiece.model",
-    #     extra_ids=0
-    # )
-
-    # def transform_fn(features):
-    #     pad_token_id = tokenizer.pad_token_id
-    #     decoder_start_token_id = pad_token_id # by default those two the same. Can be read from json config provided
-    #
-    #     # decoder_attention_mask, # Can be no masks at all, exclusive for flax
-    #
-    #     # Attention mask 1 like for c4 if no padding
-    #     # https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_flax_t5.py#L1075
-    #     # decoder_input_ids
-    #     # replace padding token id's of the labels by -100 so it's ignored by the loss, if padding applied
-    #     # labels are targets
-    #     # labels = torch.tensor(labels)
-    #     # labels[labels == tokenizer.pad_token_id] = -100
-    #     # And shift labels later
-    #     # Look Here: https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_t5.py#L1624
-    #     # https://github.com/huggingface/transformers/blob/d0acc9537829e7d067edbb791473bbceb2ecf056/src/transformers/models/t5/modeling_t5.py#L805-L830
-    #
-    #     decoder_input_ids = tf.concat(
-    #         [[decoder_start_token_id],
-    #         features["targets"][:-1]],
-    #         axis = 0
-    #     )
-    #     decoder_input_ids = tf.where(
-    #         tf.equal(decoder_input_ids, -100),
-    #         tf.fill(decoder_input_ids.shape.as_list(), pad_token_id),
-    #         decoder_input_ids
-    #     )
-    #     return {
-    #             "attention_mask": tf.ones_like(features["inputs"]),
-    #             "decoder_attention_mask": tf.ones_like(decoder_input_ids),
-    #             "decoder_input_ids": decoder_input_ids,
-    #             "input_ids": features["inputs"],
-    #             "targets": features["targets"]
-    #         }
     # if False:
     #     fd = open(filenames[0], "r")
     #     line = fd.readline()
@@ -132,19 +93,59 @@ def get_dataset_c4(
         stop_on_empty_dataset=False
     )
 
+    def transform_fn(features):
+        pad_token_id = tokenizer.pad_token_id
+        decoder_start_token_id = pad_token_id # by default those two the same. Can be read from json config provided
+    
+        # decoder_attention_mask, # Can be no masks at all, exclusive for flax
+    
+        # Attention mask 1 like for c4 if no padding
+        # https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_flax_t5.py#L1075
+        # decoder_input_ids
+        # replace padding token id's of the labels by -100 so it's ignored by the loss, if padding applied
+        # labels are targets
+        # labels = torch.tensor(labels)
+        # labels[labels == tokenizer.pad_token_id] = -100
+        # And shift labels later
+        # Look Here: https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_t5.py#L1624
+        # https://github.com/huggingface/transformers/blob/d0acc9537829e7d067edbb791473bbceb2ecf056/src/transformers/models/t5/modeling_t5.py#L805-L830
+    
+        decoder_input_ids = tf.concat(
+            [[decoder_start_token_id],
+            features["targets"][:-1]],
+            axis = 0
+        )
+        decoder_input_ids = tf.where(
+            tf.equal(decoder_input_ids, -100),
+            tf.fill(decoder_input_ids.shape.as_list(), pad_token_id),
+            decoder_input_ids
+        )
+        return {
+                "attention_mask": tf.ones_like(features["inputs"]),
+                "decoder_attention_mask": tf.ones_like(decoder_input_ids),
+                "decoder_input_ids": decoder_input_ids,
+                "input_ids": features["inputs"],
+                "targets": features["targets"]
+            }
+
+    dataset = dataset.map(lambda line: {"targets":line[0]})
+    vocabulary = SentencePieceVocabulary(
+        sentencepiece_model_file="spiece.model",
+        extra_ids=0
+    )
+    dataset = prep.denoise(
+            dataset,
+            vocabulary,
+            noise_density=noise_density,
+            noise_mask_fn=prep.random_spans_noise_mask,
+            inputs_fn=prep.noise_token_to_sentinel,
+            targets_fn=None
+        )
+    dataset = dataset.map(transform_fn)
+
     # Prefetch an entire batch of data before batching
     dataset = dataset.prefetch(buffer_size=batch_size)
 
     # Then Batch
     dataset = dataset.batch(batch_size, drop_remainder=False)
-
-    # dataset = prep.denoise(
-    #         dataset,
-    #         vocabulary,
-    #         noise_density=noise_density,
-    #         noise_mask_fn=prep.random_spans_noise_mask,
-    #         inputs_fn=prep.noise_token_to_sentinel,
-    #         targets_fn=None
-    #     )
-    # dataset = dataset.map(transform_fn)
     return dataset
