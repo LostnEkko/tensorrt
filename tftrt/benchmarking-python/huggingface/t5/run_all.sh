@@ -8,9 +8,9 @@ mkdir -p ${BASE_BENCHMARK_DATA_EXPORT_DIR}
 
 T5_MODELS=(
   "t5-small"
-  # "t5-base"
-  # "t5-large"
-  # "t5-v1_1-base"
+  "t5-base"
+  "t5-large"
+  "t5-v1_1-base"
 )
 
 RUN_ARGS="--dataset_name=realnewslike --debug --batch_size=32 --display_every=1"
