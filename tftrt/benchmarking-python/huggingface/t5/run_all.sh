@@ -23,7 +23,7 @@ export TF_TRT_SHOW_DETAILED_REPORT=1
 for model_name in "${T5_MODELS[@]}"; do
     echo "Processing Model: ${model_name} ..."
 
-    MODEL_DATA_EXPORT_DIR="${BENCHMARK_DATA_EXPORT_DIR}/${model_name}"
+    MODEL_DATA_EXPORT_DIR="${BASE_BENCHMARK_DATA_EXPORT_DIR}/${model_name}"
     mkdir -p ${MODEL_DATA_EXPORT_DIR}
 
     MODEL_PROFILE_DIR="${MODEL_DATA_EXPORT_DIR}/tf_profiles"
