@@ -28,18 +28,27 @@ import inspect
 currentdir = os.path.dirname(
     os.path.abspath(inspect.getfile(inspect.currentframe()))
 )
-parentdir = os.path.dirname(currentdir)
-parentdir = os.path.dirname(parentdir)
-sys.path.insert(0, parentdir)
+
+benchmark_base_dir = os.path.dirname(os.path.dirname(currentdir))
+sys.path.insert(0, benchmark_base_dir)
 
 from benchmark_args import BaseCommandLineAPI
 from benchmark_runner import BaseBenchmarkRunner
+
+import dataloader
 
 
 class CommandLineAPI(BaseCommandLineAPI):
 
     def __init__(self):
         super(CommandLineAPI, self).__init__()
+
+        self._parser.add_argument(
+            "--tokenizer_model_dir",
+            type=str,
+            required=True,
+            help="Directory containing the tokenizer model from HuggingFace."
+        )
 
         self._parser.add_argument(
             "--sequence_length",
@@ -55,6 +64,21 @@ class CommandLineAPI(BaseCommandLineAPI):
             help="Size of the vocabulory used for training. Refer to "
             "huggingface documentation."
         )
+
+        self._add_bool_argument(
+            name="use_random_data",
+            default=False,
+            required=False,
+            help="If set to True, the dataloader will use `tf.random`."
+        )
+
+    def _validate_args(self, args):
+        super(CommandLineAPI, self)._validate_args(args)
+
+        if not args.use_synthetic_data:
+            raise ValueError(
+                "The use of --use_synthetic_data is necessary for this model."
+            )
 
 
 class BenchmarkRunner(BaseBenchmarkRunner):
@@ -73,67 +97,64 @@ class BenchmarkRunner(BaseBenchmarkRunner):
 
         Note: script arguments can be accessed using `self._args.attr`
         """
-        
-        # inputs['attention_mask'] tensor_info:
-        #     dtype: DT_INT32
-        #     shape: (-1, -1)
-        #     name: serving_default_attention_mask:0
 
-        # inputs['decoder_attention_mask'] tensor_info:
-        #     dtype: DT_INT32
-        #     shape: (-1, -1)
-        #     name: serving_default_decoder_attention_mask:0
+        if not self._args.use_random_data:
+            dataset = dataloader.get_dataset_c4(
+                data_dir=self._args.data_dir,
+                tokenizer_dir=self._args.tokenizer_model_dir,
+                sequence_length=self._args.sequence_length,
+                batch_size=self._args.batch_size,
+                vocab_size=self._args.vocab_size,
+            )
 
-        # inputs['decoder_input_ids'] tensor_info:
-        #     dtype: DT_INT32
-        #     shape: (-1, -1)
-        #     name: serving_default_decoder_input_ids:0
+        else:
+            tf.random.set_seed(12345)
+            attention_mask = tf.random.uniform(
+                shape=(1, self._args.sequence_length),
+                maxval=self._args.vocab_size,
+                dtype=tf.int32
+            )
+            ds_attention_mask = tf.data.Dataset.from_tensor_slices(
+                attention_mask
+            )
 
-        # inputs['input_ids'] tensor_info:
-        #     dtype: DT_INT32
-        #     shape: (-1, -1)
-        #     name: serving_default_input_ids:0
-        
-        tf.random.set_seed(12345)
-        attention_mask = tf.random.uniform(
-            shape=(1, self._args.sequence_length),
-            maxval=self._args.vocab_size,
-            dtype=tf.int32
-        )
-        ds_attention_mask = tf.data.Dataset.from_tensor_slices(attention_mask)
+            decoder_attention_mask = tf.random.uniform(
+                shape=(1, self._args.sequence_length),
+                maxval=self._args.vocab_size,
+                dtype=tf.int32
+            )
+            ds_decoder_attention_mask = tf.data.Dataset.from_tensor_slices(
+                decoder_attention_mask
+            )
 
-        decoder_attention_mask = tf.random.uniform(
-            shape=(1, self._args.sequence_length),
-            maxval=self._args.vocab_size,
-            dtype=tf.int32
-        )
-        ds_decoder_attention_mask = tf.data.Dataset.from_tensor_slices(decoder_attention_mask)
+            decoder_input_ids = tf.random.uniform(
+                shape=(1, self._args.sequence_length),
+                maxval=self._args.vocab_size,
+                dtype=tf.int32
+            )
+            ds_decoder_input_ids = tf.data.Dataset.from_tensor_slices(
+                decoder_input_ids
+            )
 
-        decoder_input_ids = tf.random.uniform(
-            shape=(1, self._args.sequence_length),
-            maxval=self._args.vocab_size,
-            dtype=tf.int32
-        )
-        ds_decoder_input_ids = tf.data.Dataset.from_tensor_slices(decoder_input_ids)
+            input_ids = tf.random.uniform(
+                shape=(1, self._args.sequence_length),
+                maxval=self._args.vocab_size,
+                dtype=tf.int32
+            )
+            ds_input_ids = tf.data.Dataset.from_tensor_slices(input_ids)
 
-        input_ids = tf.random.uniform(
-            shape=(1, self._args.sequence_length),
-            maxval=self._args.vocab_size,
-            dtype=tf.int32
-        )
-        ds_input_ids = tf.data.Dataset.from_tensor_slices(input_ids)
+            dataset = tf.data.Dataset.zip((
+                ds_attention_mask,
+                ds_decoder_attention_mask,
+                ds_decoder_input_ids,
+                ds_input_ids
+            ))
+            dataset = dataset.repeat()
+            dataset = dataset.batch(self._args.batch_size)
+            dataset = dataset.take(count=1)  # loop over 1 batch
+            dataset = dataset.cache()
+            dataset = dataset.repeat()
 
-        dataset = tf.data.Dataset.zip((
-            ds_attention_mask, 
-            ds_decoder_attention_mask, 
-            ds_decoder_input_ids, 
-            ds_input_ids
-        ))
-        dataset = dataset.repeat()
-        dataset = dataset.batch(self._args.batch_size)
-        dataset = dataset.take(count=1)  # loop over 1 batch
-        dataset = dataset.cache()
-        dataset = dataset.repeat()
         dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
         return dataset, None
 
@@ -149,7 +170,7 @@ class BenchmarkRunner(BaseBenchmarkRunner):
         x = {
            "attention_mask": data_batch[0],
            "decoder_attention_mask": data_batch[1],
-           "decoder_input_ids": data_batch[2], 
+           "decoder_input_ids": data_batch[2],
            "input_ids": data_batch[3],
         }
         return x, None
@@ -187,4 +208,3 @@ if __name__ == '__main__':
 
     runner = BenchmarkRunner(args)
     runner.execute_benchmark()
-
