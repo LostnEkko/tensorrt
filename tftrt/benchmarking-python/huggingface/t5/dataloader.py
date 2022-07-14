@@ -21,7 +21,6 @@ except ModuleNotFoundError:
 import numpy as np
 import tensorflow as tf
 
-# from t5.models import mesh_transformer
 import t5.data.preprocessors as prep
 from t5.data.sentencepiece_vocabulary import SentencePieceVocabulary
 from transformers import T5Tokenizer
@@ -36,23 +35,6 @@ def get_dataset_c4(
     vocab_size=512,
     noise_density=0.15
 ):
-
-    # if False:
-    #     fd = open(filenames[0], "r")
-    #     line = fd.readline()
-    #     while line:
-    #         data = json.loads(line)
-    #         encoding = tokenizer(
-    #             data["text"],
-    #             return_tensors="tf",
-    #             max_length=sequence_length,
-    #             truncation=True,
-    #         )
-    #         dataset = tf.data.Dataset.from_tensor_slices({"targets": encoding.input_ids})
-    #         break
-    #         line = fd.readline()
-    #     fd.close()
-
     json_files = sorted(glob.glob(
         os.path.join(data_dir, "c4-validation.*.json")
     ))
@@ -68,24 +50,26 @@ def get_dataset_c4(
         for line in open(filename):
             data = json.loads(line)
 
-            yield tokenizer(
-                data["text"],
-                return_tensors="tf",
-                max_length=sequence_length,
-                truncation=True,
-                padding="max_length",
-            ).input_ids
+            yield {
+                "targets": np.squeeze(tokenizer(
+                    data["text"],
+                    return_tensors="tf",
+                    max_length=sequence_length,
+                    truncation=True,
+                    padding="max_length",
+                ).input_ids)
+            }
 
     def _get_ds_generator(_filename):
        return tf.data.Dataset.from_generator(
             lambda: jsonfile_parser(_filename),
-            output_signature=tf.TensorSpec(
-                shape=(None, sequence_length),
-                dtype=tf.int32,
-                # shape=(),
-                # dtype=tf.string,
-                name=None
-            ),
+            output_signature={
+                "targets": tf.TensorSpec(
+                    shape=(sequence_length,),
+                    dtype=tf.int32,
+                    name=None
+                )
+            },
         ).prefetch(buffer_size=tf.data.AUTOTUNE)
 
     dataset = tf.data.Dataset.sample_from_datasets(
@@ -94,42 +78,6 @@ def get_dataset_c4(
         stop_on_empty_dataset=False
     )
 
-    def transform_fn(features):
-        pad_token_id = tokenizer.pad_token_id
-        decoder_start_token_id = pad_token_id # by default those two the same. Can be read from json config provided
-    
-        # decoder_attention_mask, # Can be no masks at all, exclusive for flax
-    
-        # Attention mask 1 like for c4 if no padding
-        # https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_flax_t5.py#L1075
-        # decoder_input_ids
-        # replace padding token id's of the labels by -100 so it's ignored by the loss, if padding applied
-        # labels are targets
-        # labels = torch.tensor(labels)
-        # labels[labels == tokenizer.pad_token_id] = -100
-        # And shift labels later
-        # Look Here: https://github.com/huggingface/transformers/blob/v4.20.1/src/transformers/models/t5/modeling_t5.py#L1624
-        # https://github.com/huggingface/transformers/blob/d0acc9537829e7d067edbb791473bbceb2ecf056/src/transformers/models/t5/modeling_t5.py#L805-L830
-    
-        decoder_input_ids = tf.concat(
-            [[decoder_start_token_id],
-            features["targets"][:-1]],
-            axis = 0
-        )
-        decoder_input_ids = tf.where(
-            tf.equal(decoder_input_ids, -100),
-            tf.fill(decoder_input_ids.shape.as_list(), pad_token_id),
-            decoder_input_ids
-        )
-        return {
-                "attention_mask": tf.ones_like(features["inputs"]),
-                "decoder_attention_mask": tf.ones_like(decoder_input_ids),
-                "decoder_input_ids": decoder_input_ids,
-                "input_ids": features["inputs"],
-                "targets": features["targets"]
-            }
-
-    dataset = dataset.map(lambda line: {"targets":line[0]})
     vocabulary = SentencePieceVocabulary(
         sentencepiece_model_file=os.path.join(vocab_dir, "spiece.model"),
         extra_ids=0
@@ -142,7 +90,40 @@ def get_dataset_c4(
             inputs_fn=prep.noise_token_to_sentinel,
             targets_fn=None
         )
-    dataset = dataset.map(transform_fn)
+    
+    def transform_fn(features):
+        pad_token_id = tokenizer.pad_token_id
+
+        # Decoder token set to pad token by default.
+        decoder_start_token_id = pad_token_id
+    
+        # Shift labels to right by one to create decoder inputs.
+        decoder_input_ids = tf.concat(
+            [[decoder_start_token_id],
+            features["targets"][:-1]],
+            axis = 0
+        )
+
+        # Change -100 to pad token to prevent ignorance.
+        decoder_input_ids = tf.where(
+            tf.equal(decoder_input_ids, -100),
+            tf.fill(decoder_input_ids.shape.as_list(), pad_token_id),
+            decoder_input_ids
+        )
+
+        # Set All Attention Masks to 1 when no padding on inputs given.
+        return {
+                "attention_mask": tf.ones_like(features["inputs"]),
+                "decoder_attention_mask": tf.ones_like(decoder_input_ids),
+                "decoder_input_ids": decoder_input_ids,
+                "input_ids": features["inputs"],
+                "targets": features["targets"]
+            }
+    
+    dataset = dataset.map(
+        transform_fn,
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
 
     # Prefetch an entire batch of data before batching
     dataset = dataset.prefetch(buffer_size=batch_size)

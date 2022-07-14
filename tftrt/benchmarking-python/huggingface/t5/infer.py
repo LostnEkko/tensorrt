@@ -53,6 +53,7 @@ class CommandLineAPI(BaseCommandLineAPI):
         self._parser.add_argument(
             "--vocab_dir",
             type=str,
+            required=True,
             help="Directory containing the sentence piece model used by tokenizer. "
             "Default to tokenizer_model_dir."
         )

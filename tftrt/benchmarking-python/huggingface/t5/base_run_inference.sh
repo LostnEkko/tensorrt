@@ -100,6 +100,13 @@ if [[ ! -d ${TOKENIZER_DIR} ]]; then
     exit 1
 fi
 
+# Install Dependencies
+
+pip install --upgrade \
+    prefetch_generator \
+    orjson \
+    t5==0.4.0
+
 # Dataset Directory
 
 python ${BASE_DIR}/infer.py \
@@ -107,6 +114,7 @@ python ${BASE_DIR}/infer.py \
     --calib_data_dir=${DATA_DIR} \
     --input_saved_model_dir=${MODEL_DIR} \
     --tokenizer_model_dir=${TOKENIZER_DIR}\
+    --vocab_dir=${TOKENIZER_DIR}\
     --output_tensors_name=${OUTPUT_TENSOR_NAMES} \
     `# The following is set because we will be running synthetic benchmarks` \
     --total_max_samples=1 \
